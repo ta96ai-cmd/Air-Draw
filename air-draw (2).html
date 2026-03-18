@@ -1,0 +1,625 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AirDraw — Draw in the Air</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;700;800&display=swap');
+
+  :root {
+    --bg: #0a0a0f;
+    --panel: #12121a;
+    --border: #1e1e2e;
+    --accent: #00f5ff;
+    --accent2: #ff006e;
+    --accent3: #adff2f;
+    --text: #e0e0ff;
+    --muted: #555577;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Syne', sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    overflow: hidden;
+  }
+
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(0,245,255,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,245,255,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  header {
+    position: relative;
+    z-index: 10;
+    width: 100%;
+    padding: 14px 28px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--border);
+    background: rgba(10,10,15,0.85);
+    backdrop-filter: blur(12px);
+  }
+
+  .logo {
+    font-family: 'Space Mono', monospace;
+    font-size: 1.1rem;
+    font-weight: 700;
+    letter-spacing: 0.15em;
+    color: var(--accent);
+    text-shadow: 0 0 20px rgba(0,245,255,0.5);
+  }
+  .logo span { color: var(--accent2); }
+
+  .status-pill {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.65rem;
+    letter-spacing: 0.1em;
+    padding: 5px 14px;
+    border-radius: 100px;
+    border: 1px solid var(--muted);
+    color: var(--muted);
+    transition: all 0.3s;
+  }
+  .status-pill.active  { border-color: var(--accent3); color: var(--accent3); box-shadow: 0 0 12px rgba(173,255,47,0.3); }
+  .status-pill.drawing { border-color: var(--accent2); color: var(--accent2); box-shadow: 0 0 12px rgba(255,0,110,0.4); animation: pulse 0.8s ease-in-out infinite alternate; }
+  .status-pill.error   { border-color: var(--accent2); color: var(--accent2); }
+  @keyframes pulse { from{opacity:.7} to{opacity:1} }
+
+  .main {
+    position: relative;
+    z-index: 5;
+    flex: 1;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    gap: 16px;
+  }
+
+  .canvas-wrap {
+    position: relative;
+    border-radius: 16px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    box-shadow: 0 0 40px rgba(0,0,0,0.6);
+    flex-shrink: 0;
+    width: 640px;
+    height: 480px;
+  }
+
+  #videoEl {
+    position: absolute;
+    width: 640px; height: 480px;
+    object-fit: cover;
+    transform: scaleX(-1);
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  #skeletonCanvas {
+    position: absolute;
+    inset: 0;
+    width: 640px; height: 480px;
+    pointer-events: none;
+    z-index: 2;
+  }
+
+  #drawCanvas {
+    position: absolute;
+    inset: 0;
+    width: 640px; height: 480px;
+    z-index: 3;
+    pointer-events: none;
+  }
+
+  .corner { position: absolute; width: 20px; height: 20px; z-index: 5; pointer-events: none; }
+  .corner-tl { top:8px;left:8px;     border-top:2px solid var(--accent);   border-left:2px solid var(--accent); }
+  .corner-tr { top:8px;right:8px;    border-top:2px solid var(--accent);   border-right:2px solid var(--accent); }
+  .corner-bl { bottom:8px;left:8px;  border-bottom:2px solid var(--accent);border-left:2px solid var(--accent); }
+  .corner-br { bottom:8px;right:8px; border-bottom:2px solid var(--accent);border-right:2px solid var(--accent); }
+
+  #cursorRing {
+    position: absolute;
+    width: 22px; height: 22px;
+    border: 2px solid white;
+    border-radius: 50%;
+    pointer-events: none;
+    transform: translate(-50%, -50%);
+    z-index: 6;
+    display: none;
+    transition: width 0.1s, height 0.1s, border-color 0.1s;
+  }
+  #cursorRing.drawing { width:14px; height:14px; background:rgba(255,255,255,0.15); }
+
+  .panel {
+    display: flex; flex-direction: column; gap: 14px;
+    width: 190px; flex-shrink: 0;
+  }
+
+  .panel-section {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+
+  .section-label {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.6rem; letter-spacing: 0.15em;
+    color: var(--muted); text-transform: uppercase;
+  }
+
+  .colors { display: grid; grid-template-columns: repeat(4,1fr); gap: 7px; }
+  .color-swatch {
+    width: 100%; aspect-ratio: 1;
+    border-radius: 7px; cursor: pointer;
+    border: 2px solid transparent;
+    transition: transform 0.15s, border-color 0.15s;
+  }
+  .color-swatch:hover { transform: scale(1.12); }
+  .color-swatch.selected { border-color: white; box-shadow: 0 0 8px 2px var(--c,#fff); }
+
+  .size-row { display:flex; align-items:center; gap:8px; }
+  .size-btn {
+    flex:1; aspect-ratio:1;
+    border-radius:8px; background:var(--border);
+    border:1px solid transparent; cursor:pointer;
+    display:flex; align-items:center; justify-content:center;
+    transition:background 0.2s, border-color 0.2s;
+  }
+  .size-btn:hover { background:#252535; }
+  .size-btn.selected { border-color:var(--accent); background:rgba(0,245,255,0.1); }
+  .size-dot { background:var(--text); border-radius:50%; display:block; }
+
+  .gesture-btn {
+    padding:8px 10px; border-radius:8px;
+    background:var(--border); border:1px solid transparent;
+    color:var(--text); font-family:'Space Mono',monospace;
+    font-size:0.62rem; letter-spacing:0.06em;
+    cursor:pointer; transition:all 0.2s;
+    text-align:left; line-height:1.4;
+  }
+  .gesture-btn:hover { background:#1e1e2e; }
+  .gesture-btn.selected { border-color:var(--accent); background:rgba(0,245,255,0.08); color:var(--accent); }
+  .gesture-btn small { display:block; color:var(--muted); font-size:0.55rem; margin-top:2px; }
+
+  .action-btn {
+    width:100%; padding:10px; border-radius:9px;
+    border:1px solid var(--border); background:transparent;
+    color:var(--text); font-family:'Space Mono',monospace;
+    font-size:0.65rem; letter-spacing:0.1em;
+    cursor:pointer; transition:all 0.2s; text-transform:uppercase;
+  }
+  .action-btn:hover            { border-color:var(--accent);  color:var(--accent);  background:rgba(0,245,255,0.06); }
+  .action-btn.danger:hover     { border-color:var(--accent2); color:var(--accent2); background:rgba(255,0,110,0.06); }
+  .action-btn.save-btn:hover   { border-color:var(--accent3); color:var(--accent3); background:rgba(173,255,47,0.06); }
+
+  .switch-row { display:flex; align-items:center; justify-content:space-between; }
+  .switch-label { font-size:0.72rem; color:var(--text); }
+  .switch {
+    width:34px; height:18px;
+    background:var(--border); border-radius:100px;
+    position:relative; cursor:pointer; transition:background 0.2s;
+  }
+  .switch.on { background:var(--accent); }
+  .switch::after {
+    content:''; position:absolute;
+    top:3px; left:3px; width:12px; height:12px;
+    border-radius:50%; background:white; transition:transform 0.2s;
+  }
+  .switch.on::after { transform:translateX(16px); }
+
+  #startOverlay {
+    position:absolute; inset:0;
+    background:rgba(10,10,15,0.93);
+    display:flex; flex-direction:column;
+    align-items:center; justify-content:center;
+    gap:16px; z-index:20; border-radius:16px;
+  }
+  #startOverlay h2 {
+    font-size:1.6rem; font-weight:800;
+    color:var(--accent);
+    text-shadow:0 0 24px rgba(0,245,255,0.6);
+  }
+  #startOverlay p {
+    font-size:0.75rem; color:var(--muted);
+    font-family:'Space Mono',monospace;
+    text-align:center; line-height:1.9;
+  }
+  #startBtn {
+    padding:13px 34px;
+    background:var(--accent); color:#000;
+    border:none; border-radius:10px;
+    font-family:'Space Mono',monospace;
+    font-size:0.8rem; font-weight:700;
+    letter-spacing:0.15em; cursor:pointer;
+    text-transform:uppercase; transition:all 0.2s;
+    box-shadow:0 0 24px rgba(0,245,255,0.5);
+  }
+  #startBtn:hover { transform:scale(1.05); }
+  #startBtn:disabled { opacity:0.6; cursor:not-allowed; transform:none; }
+
+  #errorMsg {
+    color:var(--accent2); font-family:'Space Mono',monospace;
+    font-size:0.65rem; text-align:center;
+    max-width:300px; line-height:1.7; display:none;
+    white-space: pre-line;
+  }
+
+  #toast {
+    position:fixed; bottom:24px; left:50%;
+    transform:translateX(-50%) translateY(80px);
+    background:var(--panel); border:1px solid var(--border);
+    color:var(--accent3); font-family:'Space Mono',monospace;
+    font-size:0.7rem; letter-spacing:0.1em;
+    padding:10px 22px; border-radius:100px;
+    z-index:100; transition:transform 0.3s ease;
+  }
+  #toast.show { transform:translateX(-50%) translateY(0); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">AIR<span>DRAW</span></div>
+  <div class="status-pill" id="statusPill">READY</div>
+</header>
+
+<div class="main">
+
+  <!-- Left Panel -->
+  <div class="panel">
+    <div class="panel-section">
+      <div class="section-label">Color</div>
+      <div class="colors" id="colorGrid"></div>
+    </div>
+    <div class="panel-section">
+      <div class="section-label">Brush Size</div>
+      <div class="size-row" id="sizeRow">
+        <div class="size-btn selected" data-size="3"><span class="size-dot" style="width:4px;height:4px"></span></div>
+        <div class="size-btn" data-size="7"><span class="size-dot" style="width:8px;height:8px"></span></div>
+        <div class="size-btn" data-size="14"><span class="size-dot" style="width:14px;height:14px"></span></div>
+        <div class="size-btn" data-size="24"><span class="size-dot" style="width:20px;height:20px"></span></div>
+      </div>
+    </div>
+    <div class="panel-section">
+      <div class="section-label">Draw Mode</div>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <button class="gesture-btn selected" data-mode="index">
+          ☝️ Index Finger
+          <small>Raise 1 finger to draw</small>
+        </button>
+        <button class="gesture-btn" data-mode="pinch">
+          🤏 Pinch to Draw
+          <small>Pinch thumb + index</small>
+        </button>
+      </div>
+    </div>
+    <div class="panel-section">
+      <div class="switch-row">
+        <span class="switch-label">Hand Skeleton</span>
+        <div class="switch on" id="skeletonSwitch"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Canvas Area -->
+  <div class="canvas-wrap">
+    <div class="corner corner-tl"></div>
+    <div class="corner corner-tr"></div>
+    <div class="corner corner-bl"></div>
+    <div class="corner corner-br"></div>
+
+    <video id="videoEl" autoplay playsinline muted></video>
+    <canvas id="skeletonCanvas" width="640" height="480"></canvas>
+    <canvas id="drawCanvas"     width="640" height="480"></canvas>
+    <div id="cursorRing"></div>
+
+    <div id="startOverlay">
+      <h2>✋ AirDraw</h2>
+      <p>Draw in the air with your finger.<br>Your camera tracks your hand live.</p>
+      <button id="startBtn">START CAMERA</button>
+      <div id="errorMsg"></div>
+    </div>
+  </div>
+
+  <!-- Right Panel -->
+  <div class="panel">
+    <div class="panel-section">
+      <div class="section-label">Canvas</div>
+      <button class="action-btn danger" id="clearBtn">🗑 Clear Canvas</button>
+      <button class="action-btn save-btn" id="saveBtn">💾 Save Drawing</button>
+    </div>
+    <div class="panel-section">
+      <div class="section-label">Guide</div>
+      <div id="guideText" style="font-size:0.68rem;color:var(--muted);font-family:'Space Mono',monospace;line-height:2;">
+        ☝️ Raise index finger<br>to draw anywhere<br><br>
+        ✋ Open all fingers<br>to pause drawing<br><br>
+        🎨 Pick color on left
+      </div>
+    </div>
+    <div class="panel-section">
+      <div class="section-label">Fingers</div>
+      <div id="fingerStatus" style="font-family:'Space Mono',monospace;font-size:0.58rem;line-height:2.1;color:var(--muted);">
+        Waiting for hand...
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div id="toast">Saved!</div>
+
+<!-- Stable MediaPipe Hands (v0.4.x) -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/hands.js" crossorigin="anonymous"></script>
+
+<script>
+const COLORS = [
+  '#00f5ff','#ff006e','#adff2f','#ffffff',
+  '#ff9500','#bf5af2','#ff3b30','#34c759',
+  '#0a84ff','#ffcc00','#ff2d55','#5e5ce6'
+];
+
+let currentColor = COLORS[0];
+let brushSize    = 3;
+let drawMode     = 'index';
+let showSkeleton = true;
+let lastX = null, lastY = null;
+
+// DOM
+const video          = document.getElementById('videoEl');
+const skeletonCanvas = document.getElementById('skeletonCanvas');
+const drawCanvas     = document.getElementById('drawCanvas');
+const sCtx           = skeletonCanvas.getContext('2d');
+const dCtx           = drawCanvas.getContext('2d');
+const statusPill     = document.getElementById('statusPill');
+const startOverlay   = document.getElementById('startOverlay');
+const startBtn       = document.getElementById('startBtn');
+const errorMsg       = document.getElementById('errorMsg');
+const cursorRing     = document.getElementById('cursorRing');
+const fingerStatus   = document.getElementById('fingerStatus');
+const guideText      = document.getElementById('guideText');
+
+// Build color swatches
+document.getElementById('colorGrid').innerHTML = '';
+COLORS.forEach((c, i) => {
+  const sw = document.createElement('div');
+  sw.className = 'color-swatch' + (i===0?' selected':'');
+  sw.style.cssText = `background:${c};--c:${c}`;
+  sw.addEventListener('click', () => {
+    document.querySelectorAll('.color-swatch').forEach(s=>s.classList.remove('selected'));
+    sw.classList.add('selected');
+    currentColor = c;
+  });
+  document.getElementById('colorGrid').appendChild(sw);
+});
+
+// Brush size
+document.getElementById('sizeRow').addEventListener('click', e=>{
+  const btn = e.target.closest('.size-btn');
+  if(!btn) return;
+  document.querySelectorAll('.size-btn').forEach(b=>b.classList.remove('selected'));
+  btn.classList.add('selected');
+  brushSize = parseInt(btn.dataset.size);
+});
+
+// Draw mode
+document.querySelectorAll('.gesture-btn').forEach(btn=>{
+  btn.addEventListener('click',()=>{
+    document.querySelectorAll('.gesture-btn').forEach(b=>b.classList.remove('selected'));
+    btn.classList.add('selected');
+    drawMode = btn.dataset.mode;
+    lastX = lastY = null;
+    guideText.innerHTML = drawMode==='pinch'
+      ? '🤏 Pinch thumb+index<br>together to draw<br><br>🎨 Pick color on left'
+      : '☝️ Raise index finger<br>to draw anywhere<br><br>✋ Open all fingers<br>to pause drawing<br><br>🎨 Pick color on left';
+  });
+});
+
+// Skeleton toggle
+document.getElementById('skeletonSwitch').addEventListener('click', function(){
+  showSkeleton = !showSkeleton;
+  this.classList.toggle('on', showSkeleton);
+  if(!showSkeleton) sCtx.clearRect(0,0,skeletonCanvas.width,skeletonCanvas.height);
+});
+
+// Clear & Save
+document.getElementById('clearBtn').addEventListener('click',()=>{
+  dCtx.clearRect(0,0,drawCanvas.width,drawCanvas.height);
+  lastX=lastY=null;
+});
+document.getElementById('saveBtn').addEventListener('click',()=>{
+  const off=document.createElement('canvas');
+  off.width=drawCanvas.width; off.height=drawCanvas.height;
+  const oct=off.getContext('2d');
+  oct.fillStyle='#0a0a0f'; oct.fillRect(0,0,off.width,off.height);
+  oct.drawImage(drawCanvas,0,0);
+  const a=document.createElement('a');
+  a.download='airdraw_'+Date.now()+'.png';
+  a.href=off.toDataURL();
+  a.click();
+  showToast('🎨 Drawing saved!');
+});
+
+function showToast(msg){
+  const t=document.getElementById('toast');
+  t.textContent=msg; t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'),2500);
+}
+function setStatus(label,cls){
+  statusPill.textContent=label;
+  statusPill.className='status-pill '+(cls||'');
+}
+
+// Connections for skeleton
+const CONNECTIONS=[
+  [0,1],[1,2],[2,3],[3,4],
+  [0,5],[5,6],[6,7],[7,8],
+  [0,9],[9,10],[10,11],[11,12],
+  [0,13],[13,14],[14,15],[15,16],
+  [0,17],[17,18],[18,19],[19,20],
+  [5,9],[9,13],[13,17]
+];
+const FINGER_TIPS =[4,8,12,16,20];
+const FINGER_PIPS =[3,6,10,14,18];
+const FINGER_NAMES=['Thumb','Index','Middle','Ring','Pinky'];
+
+function getFingersUp(lm){
+  const thumbUp = lm[4].x < lm[3].x; // works for right hand (mirrored)
+  const rest = [1,2,3,4].map(i=> lm[FINGER_TIPS[i]].y < lm[FINGER_PIPS[i]].y);
+  return [thumbUp,...rest];
+}
+
+function onResults(results){
+  const W=640, H=480;
+  sCtx.clearRect(0,0,W,H);
+
+  if(!results.multiHandLandmarks||results.multiHandLandmarks.length===0){
+    cursorRing.style.display='none';
+    lastX=lastY=null;
+    setStatus('READY','active');
+    fingerStatus.innerHTML='Waiting for hand...';
+    return;
+  }
+
+  const lm = results.multiHandLandmarks[0];
+  // Mirror X (video is CSS-mirrored)
+  const pts = lm.map(p=>({ x:(1-p.x)*W, y:p.y*H }));
+
+  // Skeleton
+  if(showSkeleton){
+    sCtx.strokeStyle='rgba(0,245,255,0.4)';
+    sCtx.lineWidth=1.8;
+    CONNECTIONS.forEach(([a,b])=>{
+      sCtx.beginPath();
+      sCtx.moveTo(pts[a].x,pts[a].y);
+      sCtx.lineTo(pts[b].x,pts[b].y);
+      sCtx.stroke();
+    });
+    pts.forEach((p,i)=>{
+      const isTip=FINGER_TIPS.includes(i);
+      sCtx.beginPath();
+      sCtx.arc(p.x,p.y,isTip?5:3,0,Math.PI*2);
+      sCtx.fillStyle=isTip?currentColor:'rgba(0,245,255,0.7)';
+      sCtx.fill();
+    });
+  }
+
+  // Fingers
+  const fingersUp=getFingersUp(lm);
+  fingerStatus.innerHTML=FINGER_NAMES.map((n,i)=>
+    `<span style="color:${fingersUp[i]?currentColor:'var(--muted)'}">${fingersUp[i]?'▲':'▽'} ${n}</span>`
+  ).join('<br>');
+
+  // Draw point
+  let drawX,drawY,shouldDraw=false;
+
+  if(drawMode==='index'){
+    const indexUp = fingersUp[1];
+    const allUp   = fingersUp.slice(1).every(Boolean);
+    drawX=pts[8].x; drawY=pts[8].y;
+    shouldDraw = indexUp && !allUp;
+  } else {
+    const t=pts[4], idx=pts[8];
+    const dist=Math.hypot(t.x-idx.x,t.y-idx.y);
+    drawX=(t.x+idx.x)/2; drawY=(t.y+idx.y)/2;
+    shouldDraw=dist<45;
+  }
+
+  // Cursor
+  cursorRing.style.display='block';
+  cursorRing.style.left=drawX+'px';
+  cursorRing.style.top=drawY+'px';
+  cursorRing.style.borderColor=shouldDraw?currentColor:'white';
+  cursorRing.style.boxShadow=shouldDraw?`0 0 10px ${currentColor}`:'none';
+  cursorRing.classList.toggle('drawing',shouldDraw);
+
+  if(shouldDraw){
+    setStatus('DRAWING','drawing');
+    if(lastX!==null&&lastY!==null){
+      dCtx.lineCap='round';
+      dCtx.lineJoin='round';
+      dCtx.strokeStyle=currentColor;
+      dCtx.lineWidth=brushSize;
+      dCtx.shadowColor=currentColor;
+      dCtx.shadowBlur=brushSize>6?12:6;
+      dCtx.beginPath();
+      dCtx.moveTo(lastX,lastY);
+      dCtx.lineTo(drawX,drawY);
+      dCtx.stroke();
+      dCtx.shadowBlur=0;
+    }
+    lastX=drawX; lastY=drawY;
+  } else {
+    lastX=lastY=null;
+    setStatus('TRACKING','active');
+  }
+}
+
+// Start
+startBtn.addEventListener('click', async ()=>{
+  startBtn.disabled=true;
+  startBtn.textContent='STARTING...';
+  errorMsg.style.display='none';
+  setStatus('LOADING','');
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video:{ width:640, height:480, facingMode:'user' }
+    });
+    video.srcObject=stream;
+
+    // Init MediaPipe Hands
+    const hands = new Hands({ locateFile: f=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/${f}` });
+    hands.setOptions({
+      maxNumHands:1,
+      modelComplexity:1,
+      minDetectionConfidence:0.7,
+      minTrackingConfidence:0.6
+    });
+    hands.onResults(onResults);
+
+    const camera = new Camera(video,{
+      onFrame: async ()=>{ await hands.send({image:video}); },
+      width:640, height:480
+    });
+    await camera.start();
+
+    startOverlay.style.display='none';
+    setStatus('READY','active');
+
+  } catch(err){
+    console.error(err);
+    startBtn.disabled=false;
+    startBtn.textContent='RETRY';
+    setStatus('ERROR','error');
+    let msg='Could not start.\n';
+    if(err.name==='NotAllowedError') msg+='Please allow camera access in browser settings.';
+    else if(err.name==='NotFoundError') msg+='No camera found on this device.';
+    else msg+=err.message;
+    errorMsg.textContent=msg;
+    errorMsg.style.display='block';
+  }
+});
+</script>
+</body>
+</html>
