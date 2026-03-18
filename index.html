@@ -234,7 +234,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
       <input type="color" class="bginput" id="bgColor" value="#0a0a0f">
       <span class="bgtext">Solid color</span>
     </div>
-    <!-- BG presets -->
+    <!-- Static BG presets -->
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:5px;" id="bgPresets">
       <div class="cswatch" style="background:#0a0a0f;--c:#0a0a0f" data-bg="#0a0a0f" title="Black"></div>
       <div class="cswatch" style="background:#ffffff;--c:#ffffff" data-bg="#ffffff" title="White"></div>
@@ -244,6 +244,18 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;heigh
       <div class="cswatch" style="background:linear-gradient(135deg,#43e97b,#38f9d7)" data-bg="gradient4" title="Forest"></div>
       <div class="cswatch" style="background:linear-gradient(135deg,#fa709a,#fee140)" data-bg="gradient5" title="Candy"></div>
       <div class="cswatch" style="background:linear-gradient(135deg,#30cfd0,#330867)" data-bg="gradient6" title="Galaxy"></div>
+    </div>
+    <!-- Animated BG -->
+    <div class="plabel" style="margin-top:4px;">✨ Animated BG</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;" id="animBGBtns">
+      <button class="tbtn sel" data-anim="none">⬛ None<small>off</small></button>
+      <button class="tbtn" data-anim="stars">🌟 Stars<small>twinkling</small></button>
+      <button class="tbtn" data-anim="matrix">💚 Matrix<small>code rain</small></button>
+      <button class="tbtn" data-anim="aurora">🌌 Aurora<small>waves</small></button>
+      <button class="tbtn" data-anim="bubbles">🫧 Bubbles<small>floating</small></button>
+      <button class="tbtn" data-anim="fireworks">🎆 Sparks<small>fireworks</small></button>
+      <button class="tbtn" data-anim="lava">🔴 Lava<small>blobs</small></button>
+      <button class="tbtn" data-anim="grid">🔷 Grid<small>pulse</small></button>
     </div>
     <button class="abtn" id="bgImgBtn" style="font-size:0.58rem;">🖼️ Load Image</button>
     <input type="file" id="bgFile" accept="image/*" style="display:none">
@@ -409,11 +421,13 @@ makeSwitch('swSkeleton',()=>showSkeleton,v=>showSkeleton=v,v=>{if(!v)sCtx.clearR
 makeSwitch('swSound',()=>soundOn,v=>soundOn=v);
 
 // ═══════════════════════════════════════════════════════════════
-// BACKGROUND
+// BACKGROUND — STATIC + ANIMATED
 // ═══════════════════════════════════════════════════════════════
 let bgImage=null;
 let bgGradient=null;
 let camAsBG=false;
+let animBG='none';
+let bgT=0; // animation time
 
 const GRADIENTS={
   gradient1:['#1a1a2e','#16213e','#0f3460'],
@@ -424,34 +438,243 @@ const GRADIENTS={
   gradient6:['#30cfd0','#330867'],
 };
 
+// ── Animated BG objects ──────────────────────────────────────
+// Stars
+const stars=Array.from({length:120},()=>({
+  x:Math.random()*620,y:Math.random()*465,
+  r:Math.random()*1.8+0.3,
+  speed:Math.random()*0.4+0.1,
+  twinkle:Math.random()*Math.PI*2,
+  color:`hsl(${200+Math.random()*60},80%,${70+Math.random()*30}%)`
+}));
+
+// Matrix
+const COLS=Math.floor(620/14);
+const matrixDrops=Array.from({length:COLS},()=>Math.floor(Math.random()*465/14));
+const matrixChars='アイウエオカキクケコサシスセソタチツテトナニヌネノ0123456789ABCDEF'.split('');
+
+// Bubbles
+const bubbles=Array.from({length:18},()=>resetBubble({}));
+function resetBubble(b){
+  b.x=Math.random()*620;
+  b.y=465+Math.random()*100;
+  b.r=Math.random()*28+8;
+  b.speed=Math.random()*0.6+0.2;
+  b.wobble=Math.random()*Math.PI*2;
+  b.wobbleSpeed=Math.random()*0.03+0.01;
+  b.hue=Math.random()*360;
+  b.alpha=Math.random()*0.35+0.1;
+  return b;
+}
+
+// Fireworks / sparks
+const sparks=[];
+function spawnSpark(){
+  const cx=Math.random()*620,cy=Math.random()*280+40;
+  const hue=Math.random()*360;
+  for(let i=0;i<28;i++){
+    const ang=Math.random()*Math.PI*2,spd=Math.random()*4+1;
+    sparks.push({x:cx,y:cy,vx:Math.cos(ang)*spd,vy:Math.sin(ang)*spd,life:1,hue,size:Math.random()*2.5+0.5});
+  }
+}
+
+// Lava blobs
+const lavaBlobs=Array.from({length:6},(_,i)=>({
+  x:80+i*90,y:230,
+  vx:(Math.random()-0.5)*0.7,vy:(Math.random()-0.5)*0.4,
+  r:55+Math.random()*40,
+  hue:Math.random()*40, // reds/oranges
+  phase:Math.random()*Math.PI*2
+}));
+
+// Grid pulse
+let gridPulse=0;
+
+// ── Animated BG buttons ──────────────────────────────────────
+document.getElementById('animBGBtns').addEventListener('click',e=>{
+  const btn=e.target.closest('[data-anim]');
+  if(!btn)return;
+  document.querySelectorAll('[data-anim]').forEach(b=>b.classList.remove('sel'));
+  btn.classList.add('sel');
+  animBG=btn.dataset.anim;
+  if(animBG!=='none') startBGLoop();
+  else redrawBG();
+});
+
+// ── Core redraw (static only) ────────────────────────────────
 function redrawBG(){
   bgCtx.clearRect(0,0,W,H);
-  if(camAsBG && video.readyState>=2){
-    // draw mirrored camera feed as background
-    bgCtx.save();
-    bgCtx.translate(W,0);bgCtx.scale(-1,1);
-    bgCtx.drawImage(video,0,0,W,H);
-    bgCtx.restore();
+  if(camAsBG&&video.readyState>=2){
+    bgCtx.save();bgCtx.translate(W,0);bgCtx.scale(-1,1);
+    bgCtx.drawImage(video,0,0,W,H);bgCtx.restore();
     return;
   }
   if(bgGradient){
     const cols=GRADIENTS[bgGradient];
     const grad=bgCtx.createLinearGradient(0,0,W,H);
     cols.forEach((c,i)=>grad.addColorStop(i/(cols.length-1),c));
-    bgCtx.fillStyle=grad;
-    bgCtx.fillRect(0,0,W,H);
+    bgCtx.fillStyle=grad;bgCtx.fillRect(0,0,W,H);
   } else {
-    bgCtx.fillStyle=document.getElementById('bgColor').value;
+    bgCtx.fillStyle=document.getElementById('bgColor').value||'#0a0a0f';
     bgCtx.fillRect(0,0,W,H);
   }
-  if(bgImage){bgCtx.drawImage(bgImage,0,0,W,H);}
+  if(bgImage)bgCtx.drawImage(bgImage,0,0,W,H);
 }
 
-// Camera-as-BG needs continuous redraw — hook into animation
+// ── Animated draw ────────────────────────────────────────────
+function drawAnimBG(){
+  bgT+=0.016;
+
+  if(animBG==='stars'){
+    bgCtx.fillStyle='#02020a';bgCtx.fillRect(0,0,W,H);
+    stars.forEach(s=>{
+      s.twinkle+=s.speed*0.05;
+      const alpha=0.4+0.6*Math.abs(Math.sin(s.twinkle));
+      bgCtx.globalAlpha=alpha;
+      bgCtx.fillStyle=s.color;
+      // gentle drift
+      s.x+=Math.sin(s.twinkle*0.3)*0.15;
+      bgCtx.beginPath();bgCtx.arc(s.x,s.y,s.r,0,Math.PI*2);bgCtx.fill();
+      // shooting star occasionally
+      if(Math.random()<0.001){
+        bgCtx.globalAlpha=0.7;
+        bgCtx.strokeStyle='#fff';bgCtx.lineWidth=1;
+        bgCtx.beginPath();bgCtx.moveTo(s.x,s.y);bgCtx.lineTo(s.x+60,s.y+20);bgCtx.stroke();
+      }
+    });
+    bgCtx.globalAlpha=1;
+
+  } else if(animBG==='matrix'){
+    bgCtx.fillStyle='rgba(0,0,0,0.05)';bgCtx.fillRect(0,0,W,H);
+    bgCtx.fillStyle='#00ff41';bgCtx.font='bold 13px monospace';
+    matrixDrops.forEach((y,x)=>{
+      const ch=matrixChars[Math.floor(Math.random()*matrixChars.length)];
+      const px=x*14, py=y*14;
+      // bright head
+      bgCtx.fillStyle='#aaffaa';bgCtx.fillText(ch,px,py);
+      // trail glow
+      bgCtx.fillStyle='#00ff41';
+      if(py>14) bgCtx.fillText(matrixChars[Math.floor(Math.random()*matrixChars.length)],px,py-14);
+      if(y*14>H&&Math.random()>0.975) matrixDrops[x]=0;
+      else matrixDrops[x]++;
+    });
+
+  } else if(animBG==='aurora'){
+    bgCtx.fillStyle='#010a12';bgCtx.fillRect(0,0,W,H);
+    // multiple aurora bands
+    [[0.3,'#00ffcc'],[0.55,'#7b2ff7'],[0.75,'#00bfff'],[0.9,'#ff006e']].forEach(([yFrac,col],li)=>{
+      const baseY=H*yFrac;
+      bgCtx.beginPath();
+      bgCtx.moveTo(0,H);
+      for(let x=0;x<=W;x+=4){
+        const wave=Math.sin(x*0.012+bgT*(0.4+li*0.15)+li)*55
+                  +Math.sin(x*0.025+bgT*(0.7+li*0.1))*25;
+        bgCtx.lineTo(x,baseY+wave);
+      }
+      bgCtx.lineTo(W,H);bgCtx.closePath();
+      const grad=bgCtx.createLinearGradient(0,baseY-80,0,baseY+80);
+      grad.addColorStop(0,'transparent');
+      grad.addColorStop(0.5,col+'55');
+      grad.addColorStop(1,'transparent');
+      bgCtx.fillStyle=grad;bgCtx.fill();
+    });
+    // stars on top
+    bgCtx.globalAlpha=0.5;
+    stars.slice(0,60).forEach(s=>{
+      bgCtx.fillStyle='#ffffff';
+      bgCtx.beginPath();bgCtx.arc(s.x,s.y*0.5,s.r*0.7,0,Math.PI*2);bgCtx.fill();
+    });
+    bgCtx.globalAlpha=1;
+
+  } else if(animBG==='bubbles'){
+    bgCtx.fillStyle='#020d1a';bgCtx.fillRect(0,0,W,H);
+    bubbles.forEach(b=>{
+      b.y-=b.speed;
+      b.wobble+=b.wobbleSpeed;
+      b.x+=Math.sin(b.wobble)*0.6;
+      if(b.y+b.r<0)resetBubble(b);
+      // draw bubble
+      bgCtx.globalAlpha=b.alpha;
+      const grad=bgCtx.createRadialGradient(b.x-b.r*0.3,b.y-b.r*0.3,b.r*0.1,b.x,b.y,b.r);
+      grad.addColorStop(0,`hsla(${b.hue},80%,90%,0.8)`);
+      grad.addColorStop(0.5,`hsla(${b.hue},70%,60%,0.2)`);
+      grad.addColorStop(1,`hsla(${b.hue},80%,50%,0.05)`);
+      bgCtx.beginPath();bgCtx.arc(b.x,b.y,b.r,0,Math.PI*2);
+      bgCtx.fillStyle=grad;bgCtx.fill();
+      // rim highlight
+      bgCtx.globalAlpha=b.alpha*0.8;
+      bgCtx.strokeStyle=`hsla(${b.hue},80%,80%,0.5)`;
+      bgCtx.lineWidth=1;bgCtx.stroke();
+    });
+    bgCtx.globalAlpha=1;
+
+  } else if(animBG==='fireworks'){
+    bgCtx.fillStyle='rgba(2,2,10,0.18)';bgCtx.fillRect(0,0,W,H);
+    if(Math.random()<0.04)spawnSpark();
+    for(let i=sparks.length-1;i>=0;i--){
+      const s=sparks[i];
+      s.x+=s.vx;s.y+=s.vy;s.vy+=0.07;s.life-=0.018;s.vx*=0.98;
+      if(s.life<=0){sparks.splice(i,1);continue;}
+      bgCtx.globalAlpha=s.life;
+      bgCtx.fillStyle=`hsl(${s.hue},100%,${50+s.life*40}%)`;
+      bgCtx.shadowColor=`hsl(${s.hue},100%,70%)`;
+      bgCtx.shadowBlur=6;
+      bgCtx.beginPath();bgCtx.arc(s.x,s.y,s.size,0,Math.PI*2);bgCtx.fill();
+    }
+    bgCtx.shadowBlur=0;bgCtx.globalAlpha=1;
+
+  } else if(animBG==='lava'){
+    bgCtx.fillStyle='#0a0000';bgCtx.fillRect(0,0,W,H);
+    lavaBlobs.forEach(b=>{
+      b.x+=b.vx;b.y+=b.vy;b.phase+=0.012;
+      if(b.x<-b.r||b.x>W+b.r)b.vx*=-1;
+      if(b.y<-b.r||b.y>H+b.r)b.vy*=-1;
+      const pulse=b.r+Math.sin(b.phase)*12;
+      const grad=bgCtx.createRadialGradient(b.x,b.y,0,b.x,b.y,pulse);
+      grad.addColorStop(0,`hsla(${b.hue+20},100%,70%,0.9)`);
+      grad.addColorStop(0.4,`hsla(${b.hue},100%,50%,0.6)`);
+      grad.addColorStop(1,'transparent');
+      bgCtx.globalAlpha=0.7;
+      bgCtx.fillStyle=grad;
+      bgCtx.beginPath();bgCtx.arc(b.x,b.y,pulse,0,Math.PI*2);bgCtx.fill();
+    });
+    bgCtx.globalAlpha=1;
+
+  } else if(animBG==='grid'){
+    gridPulse+=0.04;
+    bgCtx.fillStyle='#020208';bgCtx.fillRect(0,0,W,H);
+    const step=36;
+    for(let x=0;x<=W;x+=step){
+      for(let y=0;y<=H;y+=step){
+        const dist=Math.hypot(x-W/2,y-H/2);
+        const wave=Math.sin(dist*0.03-gridPulse)*0.5+0.5;
+        bgCtx.globalAlpha=wave*0.55+0.05;
+        bgCtx.strokeStyle=`hsl(${190+wave*60},90%,${50+wave*30}%)`;
+        bgCtx.lineWidth=0.8;
+        bgCtx.beginPath();bgCtx.arc(x,y,2.5,0,Math.PI*2);bgCtx.fill();
+        bgCtx.fillStyle=bgCtx.strokeStyle;bgCtx.fill();
+      }
+    }
+    // flowing horizontal lines
+    bgCtx.globalAlpha=0.15;
+    for(let y=0;y<H;y+=step){
+      bgCtx.strokeStyle=`hsl(${190+Math.sin(y*0.1+bgT)*60},80%,60%)`;
+      bgCtx.lineWidth=0.5;
+      bgCtx.beginPath();bgCtx.moveTo(0,y);bgCtx.lineTo(W,y);bgCtx.stroke();
+    }
+    bgCtx.globalAlpha=1;
+  }
+}
+
+// ── BG animation loop ─────────────────────────────────────────
 let bgAnimId=null;
 function startBGLoop(){
   if(bgAnimId)return;
-  function loop(){bgAnimId=requestAnimationFrame(loop);if(camAsBG)redrawBG();}
+  function loop(){
+    bgAnimId=requestAnimationFrame(loop);
+    if(animBG!=='none') drawAnimBG();
+    else if(camAsBG) redrawBG();
+  }
   loop();
 }
 
@@ -472,12 +695,8 @@ document.getElementById('bgPresets').addEventListener('click',e=>{
   document.querySelectorAll('#bgPresets [data-bg]').forEach(x=>x.classList.remove('sel'));
   el.classList.add('sel');
   const val=el.dataset.bg;
-  if(GRADIENTS[val]){
-    bgGradient=val;bgImage=null;
-  } else {
-    bgGradient=null;
-    document.getElementById('bgColor').value=val;
-  }
+  if(GRADIENTS[val]){bgGradient=val;bgImage=null;}
+  else{bgGradient=null;document.getElementById('bgColor').value=val;}
   redrawBG();
 });
 
@@ -489,15 +708,18 @@ document.getElementById('bgFile').addEventListener('change',e=>{
   img.src=URL.createObjectURL(f);
 });
 document.getElementById('bgClearBtn').addEventListener('click',()=>{
-  bgImage=null;bgGradient=null;camAsBG=false;
+  bgImage=null;bgGradient=null;camAsBG=false;animBG='none';
   document.getElementById('swCamBG').classList.remove('on');
   document.getElementById('bgColor').value='#0a0a0f';
   document.getElementById('bgColorRow').style.opacity='1';
   document.getElementById('bgPresets').style.opacity='1';
   document.querySelectorAll('#bgPresets [data-bg]').forEach(x=>x.classList.remove('sel'));
+  document.querySelectorAll('[data-anim]').forEach(b=>b.classList.remove('sel'));
+  document.querySelector('[data-anim="none"]').classList.add('sel');
   redrawBG();
 });
 redrawBG();
+startBGLoop();
 
 // ═══════════════════════════════════════════════════════════════
 // UNDO / REDO
